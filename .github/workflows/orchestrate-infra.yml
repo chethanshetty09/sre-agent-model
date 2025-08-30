@@ -1,8 +1,13 @@
-name: "Orchestrate Infra: Terraform -> Snapshot"
+name: "Orchestrate Infra: Terraform (plan on PR) -> apply on main -> Snapshot"
 
 on:
-  push:
+  pull_request:
     branches: [main, develop]
+    paths:
+      - 'sre-agent-aws/**'
+      - '.github/workflows/**'
+  push:
+    branches: [main]
     paths:
       - 'sre-agent-aws/**'
       - '.github/workflows/**'
@@ -37,11 +42,41 @@ jobs:
             fi
           fi
 
-  # CDK removed — we deploy only with Terraform
+  # Plan job for pull requests (safe: only shows changes)
+  terraform-plan:
+    needs: determine-environment
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.5.7'
+      - name: Terraform Init
+        working-directory: sre-agent-aws/terraform
+        run: terraform init -input=false
+      - name: Terraform Plan
+        working-directory: sre-agent-aws/terraform
+        run: |
+          terraform plan -input=false -no-color -out=tfplan
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: sre-agent-aws/terraform/tfplan
 
+  # Apply only runs on pushes to main (protected branch). This will execute the real changes.
   terraform-apply:
     needs: determine-environment
     runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v4
       - name: Configure AWS credentials
@@ -59,11 +94,14 @@ jobs:
         run: terraform init -input=false
       - name: Terraform Apply
         working-directory: sre-agent-aws/terraform
+        env:
+          TF_SKIP_CONFIRMATION: '1'
         run: terraform apply -input=false -auto-approve
 
   create-db-snapshot:
     needs: terraform-apply
     runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
