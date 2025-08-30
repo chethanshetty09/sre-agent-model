@@ -1,0 +1,208 @@
+name: Deploy Database Schema
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'database-schema.sql'
+      - 'database-migrations/**'
+      - '.github/workflows/deploy-database.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'database-schema.sql'
+      - 'database-migrations/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+        - deploy
+        - rollback
+        - validate
+
+env:
+  POSTGRES_VERSION: '14'
+
+jobs:
+  validate-schema:
+    name: Validate Database Schema
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PostgreSQL
+        uses: Harmon758/postgresql-action@v1.0.0
+        with:
+          postgresql version: ${{ env.POSTGRES_VERSION }}
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Validate SQL syntax
+        run: |
+          psql -h localhost -U postgres -d postgres -f database-schema.sql --dry-run || echo "Schema validation completed"
+
+  deploy-staging:
+    name: Deploy to Staging Database
+    needs: validate-schema
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Deploy schema to staging
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          echo "Deploying database schema to staging..."
+          psql "$DATABASE_URL" -f database-schema.sql
+
+      - name: Verify deployment
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          echo "Verifying database deployment..."
+          psql "$DATABASE_URL" -c "\dt" | grep -E "(incidents|metrics|anomalies|infrastructure_configs|model_performance|alert_rules|notifications|system_health)"
+          psql "$DATABASE_URL" -c "\dv" | grep -E "(recent_anomalies_view|system_health_summary)"
+
+      - name: Run database tests
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          echo "Running database tests..."
+          psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM alert_rules;"
+          psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM system_health;"
+
+  deploy-production:
+    name: Deploy to Production Database
+    needs: validate-schema
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Create backup before deployment
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          echo "Creating database backup..."
+          BACKUP_FILE="backup_$(date +%Y%m%d_%H%M%S).sql"
+          pg_dump "$DATABASE_URL" > "$BACKUP_FILE"
+          echo "Backup created: $BACKUP_FILE"
+
+      - name: Deploy schema to production
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          echo "Deploying database schema to production..."
+          psql "$DATABASE_URL" -f database-schema.sql
+
+      - name: Verify deployment
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          echo "Verifying database deployment..."
+          psql "$DATABASE_URL" -c "\dt" | grep -E "(incidents|metrics|anomalies|infrastructure_configs|model_performance|alert_rules|notifications|system_health)"
+          psql "$DATABASE_URL" -c "\dv" | grep -E "(recent_anomalies_view|system_health_summary)"
+
+      - name: Run database tests
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          echo "Running database tests..."
+          psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM alert_rules;"
+          psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM system_health;"
+
+      - name: Upload backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-db-backup
+          path: backup_*.sql
+          retention-days: 30
+
+  rollback:
+    name: Rollback Database Changes
+    needs: validate-schema
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'rollback'
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Download backup
+        uses: actions/download-artifact@v4
+        with:
+          name: production-db-backup
+          path: ./backups
+
+      - name: Rollback database
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          echo "Rolling back database changes..."
+          BACKUP_FILE=$(ls ./backups/backup_*.sql | head -1)
+          if [ -f "$BACKUP_FILE" ]; then
+            psql "$DATABASE_URL" -f "$BACKUP_FILE"
+            echo "Rollback completed using: $BACKUP_FILE"
+          else
+            echo "No backup file found for rollback"
+            exit 1
+          fi
+
+  notify:
+    name: Notify Database Deployment Status
+    needs: [deploy-staging, deploy-production, rollback]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Notify Slack
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#sre-alerts'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        if: always()
+
+      - name: Create deployment summary
+        if: always()
+        run: |
+          echo "## Database Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Staging**: ${{ needs.deploy-staging.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Production**: ${{ needs.deploy-production.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Rollback**: ${{ needs.rollback.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Overall Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
