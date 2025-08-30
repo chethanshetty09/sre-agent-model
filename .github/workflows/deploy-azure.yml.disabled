@@ -1,0 +1,215 @@
+name: Deploy Azure Infrastructure
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'sre-agent-azure/**'
+      - '.github/workflows/deploy-azure.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'sre-agent-azure/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      resource_group:
+        description: 'Resource group name'
+        required: true
+        default: 'sre-agent-rg'
+      location:
+        description: 'Azure region'
+        required: true
+        default: 'eastus'
+
+env:
+  AZURE_LOCATION: eastus
+
+jobs:
+  validate:
+    name: Validate ARM Template
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate ARM template
+        working-directory: sre-agent-azure
+        run: |
+          az deployment group validate \
+            --resource-group dummy-rg \
+            --template-file azuredeploy.json \
+            --parameters appName=sre-agent
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set Azure CLI version
+        run: az version
+
+      - name: Create Resource Group
+        run: |
+          az group create \
+            --name sre-agent-staging-rg \
+            --location ${{ env.AZURE_LOCATION }}
+
+      - name: Deploy ARM Template
+        working-directory: sre-agent-azure
+        run: |
+          az deployment group create \
+            --resource-group sre-agent-staging-rg \
+            --template-file azuredeploy.json \
+            --parameters appName=sre-agent-staging
+
+      - name: Get deployment outputs
+        run: |
+          az deployment group show \
+            --resource-group sre-agent-staging-rg \
+            --name azuredeploy \
+            --query properties.outputs \
+            --output json > staging-outputs.json
+
+      - name: Upload deployment outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-outputs-staging
+          path: staging-outputs.json
+
+  deploy-production:
+    name: Deploy to Production
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set Azure CLI version
+        run: az version
+
+      - name: Create Resource Group
+        run: |
+          az group create \
+            --name sre-agent-production-rg \
+            --location ${{ env.AZURE_LOCATION }}
+
+      - name: Deploy ARM Template
+        working-directory: sre-agent-azure
+        run: |
+          az deployment group create \
+            --resource-group sre-agent-production-rg \
+            --template-file azuredeploy.json \
+            --parameters appName=sre-agent-production
+
+      - name: Get deployment outputs
+        run: |
+          az deployment group show \
+            --resource-group sre-agent-production-rg \
+            --name azuredeploy \
+            --query properties.outputs \
+            --output json > production-outputs.json
+
+      - name: Upload deployment outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-outputs-production
+          path: production-outputs.json
+
+  deploy-containers:
+    name: Deploy Container Instances
+    needs: [deploy-staging, deploy-production]
+    runs-on: ubuntu-latest
+    if: always() && (needs.deploy-staging.result == 'success' || needs.deploy-production.result == 'success')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Azure Container Registry
+        run: |
+          az acr login --name ${{ secrets.AZURE_CONTAINER_REGISTRY }}
+
+      - name: Build and push API image
+        run: |
+          docker build -t ${{ secrets.AZURE_CONTAINER_REGISTRY }}.azurecr.io/sre-agent-api:latest python-backend/
+          docker push ${{ secrets.AZURE_CONTAINER_REGISTRY }}.azurecr.io/sre-agent-api:latest
+
+      - name: Build and push Frontend image
+        run: |
+          docker build -t ${{ secrets.AZURE_CONTAINER_REGISTRY }}.azurecr.io/sre-agent-frontend:latest .
+          docker push ${{ secrets.AZURE_CONTAINER_REGISTRY }}.azurecr.io/sre-agent-frontend:latest
+
+      - name: Deploy to Staging (if successful)
+        if: needs.deploy-staging.result == 'success'
+        run: |
+          az container create \
+            --resource-group sre-agent-staging-rg \
+            --file sre-agent-azure/azure-container-deployment.yml \
+            --name sre-agent-staging-containers
+
+      - name: Deploy to Production (if successful)
+        if: needs.deploy-production.result == 'success'
+        run: |
+          az container create \
+            --resource-group sre-agent-production-rg \
+            --file sre-agent-azure/azure-container-deployment.yml \
+            --name sre-agent-production-containers
+
+  notify:
+    name: Notify Deployment Status
+    needs: [deploy-staging, deploy-production, deploy-containers]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Notify Teams
+        uses: skitionek/notify-teams@v1
+        with:
+          webhook_url: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          message: |
+            ## Azure Infrastructure Deployment
+            - **Staging**: ${{ needs.deploy-staging.result || 'skipped' }}
+            - **Production**: ${{ needs.deploy-production.result || 'skipped' }}
+            - **Containers**: ${{ needs.deploy-containers.result || 'skipped' }}
+            - **Overall Status**: ${{ job.status }}
+        if: always()
+
+      - name: Create deployment summary
+        if: always()
+        run: |
+          echo "## Azure Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Staging**: ${{ needs.deploy-staging.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Production**: ${{ needs.deploy-production.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Containers**: ${{ needs.deploy-containers.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Overall Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY

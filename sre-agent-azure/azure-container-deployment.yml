@@ -1,0 +1,76 @@
+apiVersion: 2019-12-01
+location: eastus
+name: sre-agent-container-group
+properties:
+  containers:
+  - name: sre-agent-api
+    properties:
+      image: your-registry.azurecr.io/sre-agent-api:latest
+      resources:
+        requests:
+          cpu: 2
+          memoryInGb: 4
+      ports:
+      - port: 8000
+      environmentVariables:
+      - name: DATABASE_URL
+        value: postgresql://user:pass@your-postgres.postgres.database.azure.com:5432/sreagent
+      - name: AZURE_SUBSCRIPTION_ID
+        value: your-subscription-id
+      - name: AZURE_RESOURCE_GROUP
+        value: sre-agent-rg
+      - name: HUGGINGFACE_API_KEY
+        value: your-hf-token
+      - name: MODEL_CACHE_DIR
+        value: /tmp/models
+      - name: API_HOST
+        value: 0.0.0.0
+      - name: API_PORT
+        value: 8000
+      - name: LOG_LEVEL
+        value: INFO
+      volumeMounts:
+      - name: model-cache
+        mountPath: /tmp/models
+  - name: sre-agent-frontend
+    properties:
+      image: your-registry.azurecr.io/sre-agent-frontend:latest
+      resources:
+        requests:
+          cpu: 1
+          memoryInGb: 2
+      ports:
+      - port: 3000
+      environmentVariables:
+      - name: REACT_APP_API_URL
+        value: http://sre-agent-api:8000
+      - name: NODE_ENV
+        value: production
+  - name: redis
+    properties:
+      image: redis:7-alpine
+      resources:
+        requests:
+          cpu: 0.5
+          memoryInGb: 1
+      ports:
+      - port: 6379
+  osType: Linux
+  ipAddress:
+    type: Public
+    ports:
+    - protocol: tcp
+      port: 8000
+    - protocol: tcp
+      port: 3000
+    - protocol: tcp
+      port: 6379
+  volumes:
+  - name: model-cache
+    azureFile:
+      shareName: model-cache
+      storageAccountName: your-storage-account
+      storageAccountKey: your-storage-key
+tags:
+  environment: production
+  application: sre-agent
