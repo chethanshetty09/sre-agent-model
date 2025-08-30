@@ -1,4 +1,4 @@
-name: "Orchestrate Infra: CDK -> Terraform -> Snapshot"
+name: "Orchestrate Infra: Terraform -> Snapshot"
 
 on:
   push:
@@ -37,44 +37,10 @@ jobs:
             fi
           fi
 
-  cdk-deploy:
-    needs: determine-environment
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-      - name: Install CDK and deps
-        run: |
-          npm install -g aws-cdk
-          npx cdk acknowledge 34892 || true
-          python -m pip install --upgrade pip
-          pip install -r sre-agent-aws/requirements.txt
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      - name: CDK bootstrap
-        working-directory: sre-agent-aws
-        run: |
-          cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }} || true
-      - name: CDK deploy
-        working-directory: sre-agent-aws
-        env:
-          ENVIRONMENT: ${{ needs.determine-environment.outputs.env }}
-        run: |
-          cdk deploy --require-approval never --context environment=${ENVIRONMENT}
+  # CDK removed — we deploy only with Terraform
 
   terraform-apply:
-    needs: cdk-deploy
+    needs: determine-environment
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
