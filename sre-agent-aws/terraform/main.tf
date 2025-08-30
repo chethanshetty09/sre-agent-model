@@ -187,7 +187,7 @@ resource "aws_security_group" "rds_sg" {
 
 # Application Load Balancer
 resource "aws_lb" "sre_agent_alb" {
-  name               = "sre-agent-alb"
+  name               = "${var.resource_prefix}sre-agent-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb_sg.id]
@@ -202,7 +202,7 @@ resource "aws_lb" "sre_agent_alb" {
 
 # Target Group
 resource "aws_lb_target_group" "sre_agent_tg" {
-  name     = "sre-agent-tg"
+  name     = "${var.resource_prefix}sre-agent-tg"
   port     = 8000
   protocol = "HTTP"
   vpc_id   = aws_vpc.sre_agent_vpc.id
@@ -252,7 +252,7 @@ resource "aws_ecs_cluster" "sre_agent_cluster" {
 
 # RDS Database
 resource "aws_db_subnet_group" "sre_agent_db_subnet_group" {
-  name       = "sre-agent-db-subnet-group"
+  name       = "${var.resource_prefix}sre-agent-db-subnet-group"
   subnet_ids = aws_subnet.database_subnet[*].id
 
   tags = {
@@ -261,7 +261,7 @@ resource "aws_db_subnet_group" "sre_agent_db_subnet_group" {
 }
 
 resource "aws_db_instance" "sre_agent_db" {
-  identifier     = "sre-agent-db"
+  identifier     = "${var.resource_prefix}sre-agent-db"
   engine         = "postgres"
   # Let AWS pick a supported default minor engine version for PostgreSQL 14
   # (removing a hard-coded unsupported minor version like 14.9 avoids
@@ -293,7 +293,8 @@ resource "aws_db_instance" "sre_agent_db" {
 
 # S3 Bucket for ML Models
 resource "aws_s3_bucket" "sre_agent_models" {
-  bucket = "sre-agent-models-${data.aws_caller_identity.current.account_id}"
+  bucket = "${var.resource_prefix}sre-agent-models-${data.aws_caller_identity.current.account_id}"
+  force_destroy = var.force_destroy_s3
 
   tags = {
     Name = "sre-agent-models"
@@ -350,6 +351,18 @@ variable "aws_region" {
   description = "AWS region"
   type        = string
   default     = "us-east-1"
+}
+
+variable "resource_prefix" {
+  description = "Optional prefix to apply to resource names to avoid collisions"
+  type        = string
+  default     = ""
+}
+
+variable "force_destroy_s3" {
+  description = "When true, S3 bucket will be force deleted when running terraform destroy (use with caution)"
+  type        = bool
+  default     = false
 }
 
 variable "db_password" {
