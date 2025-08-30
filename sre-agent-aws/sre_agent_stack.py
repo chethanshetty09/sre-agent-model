@@ -112,11 +112,13 @@ class SREAgentStack(Stack):
 
         database = rds.DatabaseInstance(
             self, "SREAgentDatabase",
-            # Omit a pinned minor engine version so AWS will select a
-            # supported minor version for Postgres 14. If you need a
-            # specific minor version, query available engine versions
-            # and set it explicitly.
-            engine=rds.DatabaseInstanceEngine.postgres(),
+            # Specify a supported Postgres engine major version from the
+            # installed aws_cdk so the CDK construct API is satisfied.
+            # If you prefer a different major version, replace VER_16_3
+            # with another available constant from rds.PostgresEngineVersion.
+            engine=rds.DatabaseInstanceEngine.postgres(
+                version=rds.PostgresEngineVersion.VER_16_3
+            ),
             instance_type=ec2.InstanceType.of(
                 ec2.InstanceClass.T3,
                 ec2.InstanceSize.MICRO
@@ -232,7 +234,7 @@ class SREAgentStack(Stack):
             "APIListener",
             port=80,
             protocol=elbv2.ApplicationProtocol.HTTP,
-            default_action=elbv2.ListenerAction.forward([api_task_definition])
+            default_target_groups=[api_target_group]
         )
 
         # SNS Topic for Alerts
