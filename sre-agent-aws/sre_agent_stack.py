@@ -88,9 +88,12 @@ class SREAgentStack(Stack):
         )
 
         # S3 Bucket for ML Models
+        # Create S3 bucket for ML models. Do not hard-code the bucket name
+        # with a placeholder account id (e.g. YOUR_ACCOUNT_ID) because that
+        # can produce invalid bucket names. Let CDK generate a safe name
+        # or provide a validated, lowercase bucket name via context/parameters.
         model_bucket = s3.Bucket(
             self, "SREAgentModelBucket",
-            bucket_name=f"sre-agent-models-{self.account}",
             versioned=True,
             encryption=s3.BucketEncryption.S3_MANAGED,
             removal_policy=RemovalPolicy.DESTROY,
@@ -109,9 +112,11 @@ class SREAgentStack(Stack):
 
         database = rds.DatabaseInstance(
             self, "SREAgentDatabase",
-            engine=rds.DatabaseInstanceEngine.postgres(
-                version=rds.PostgresEngineVersion.VER_14_9
-            ),
+            # Omit a pinned minor engine version so AWS will select a
+            # supported minor version for Postgres 14. If you need a
+            # specific minor version, query available engine versions
+            # and set it explicitly.
+            engine=rds.DatabaseInstanceEngine.postgres(),
             instance_type=ec2.InstanceType.of(
                 ec2.InstanceClass.T3,
                 ec2.InstanceSize.MICRO
