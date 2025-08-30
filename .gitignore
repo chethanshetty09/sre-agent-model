@@ -1,3 +1,13 @@
+/.venv
+/.terraform
+/sre-agent-aws/terraform/.terraform
+/sre-agent-aws/terraform/terraform.tfstate
+/sre-agent-aws/terraform/terraform.tfstate.backup
+/sre-agent-aws/terraform/destroy.tfplan
+/sre-agent-aws/terraform/*.tfvars
+*.pyc
+__pycache__/
+.DS_Store
 # Logs
 logs
 *.log
