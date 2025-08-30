@@ -2,26 +2,24 @@ name: Deploy AWS Infrastructure (CDK)
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
     paths:
       - 'sre-agent-aws/**'
       - '.github/workflows/deploy-aws-cdk.yml'
   pull_request:
-    branches: [ main ]
+    branches: [main]
     paths:
       - 'sre-agent-aws/**'
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Environment to deploy to'
+        description: Environment to deploy to
         required: true
-        default: 'staging'
+        default: staging
         type: choice
-        options:
-        - staging
-        - production
+        options: [staging, production]
       force_deploy:
-        description: 'Force deployment even if no changes'
+        description: Force deployment even if no changes
         required: false
         default: false
         type: boolean
@@ -29,182 +27,96 @@ on:
 env:
   AWS_REGION: us-east-1
   PYTHON_VERSION: '3.9'
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
 
 jobs:
   validate:
-    name: Validate CDK
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
+      - uses: actions/checkout@v4
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Set up Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm'
-
-      - name: Install AWS CDK
+      - name: Install CDK
         run: npm install -g aws-cdk
-
-      - name: Install Python dependencies
+      - name: Install Python deps
         working-directory: sre-agent-aws
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install aws-cdk-lib constructs
-
-      - name: CDK Synth
+      - name: CDK synth
         working-directory: sre-agent-aws
         run: cdk synth
 
   deploy-staging:
-    name: Deploy to Staging
     needs: validate
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    if: >-
+      github.ref == 'refs/heads/develop' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
     environment: staging
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
+      - uses: actions/checkout@v4
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-
-      - name: Install AWS CDK
+      - name: Install CDK
         run: npm install -g aws-cdk
-
-      - name: Install Python dependencies
-        working-directory: sre-agent-aws
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install aws-cdk-lib constructs
-
-      - name: Configure AWS credentials
+      - name: Configure AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Bootstrap CDK (if needed)
+      - name: Bootstrap
         working-directory: sre-agent-aws
-        run: |
-          cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }} || echo "CDK already bootstrapped"
-
-      - name: Deploy to Staging
+        run: cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }} || true
+      - name: Deploy
         working-directory: sre-agent-aws
-        run: |
-          cdk deploy --require-approval never --context environment=staging
-
-      - name: Get deployment outputs
-        working-directory: sre-agent-aws
-        run: |
-          cdk list
-          cdk deploy --require-approval never --context environment=staging --outputs-file cdk-outputs.json
-        continue-on-error: true
-
-      - name: Upload CDK outputs
-        uses: actions/upload-artifact@v4
-        with:
-          name: cdk-outputs-staging
-          path: sre-agent-aws/cdk-outputs.json
-          if-no-files-found: ignore
+        run: cdk deploy --require-approval never --context environment=staging
 
   deploy-production:
-    name: Deploy to Production
     needs: validate
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
     environment: production
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
+      - uses: actions/checkout@v4
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-
-      - name: Install AWS CDK
+      - name: Install CDK
         run: npm install -g aws-cdk
-
-      - name: Install Python dependencies
-        working-directory: sre-agent-aws
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install aws-cdk-lib constructs
-
-      - name: Configure AWS credentials
+      - name: Configure AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Bootstrap CDK (if needed)
+      - name: Bootstrap
         working-directory: sre-agent-aws
-        run: |
-          cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }} || echo "CDK already bootstrapped"
-
-      - name: Deploy to Production
+        run: cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }} || true
+      - name: Deploy
         working-directory: sre-agent-aws
-        run: |
-          cdk deploy --require-approval never --context environment=production
-
-      - name: Get deployment outputs
-        working-directory: sre-agent-aws
-        run: |
-          cdk list
-          cdk deploy --require-approval never --context environment=production --outputs-file cdk-outputs.json
-        continue-on-error: true
-
-      - name: Upload CDK outputs
-        uses: actions/upload-artifact@v4
-        with:
-          name: cdk-outputs-production
-          path: sre-agent-aws/cdk-outputs.json
-          if-no-files-found: ignore
+        run: cdk deploy --require-approval never --context environment=production
 
   notify:
-    name: Notify Deployment Status
     needs: [deploy-staging, deploy-production]
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - name: Notify Slack
-        uses: 8398a7/action-slack@v3
-        with:
-          status: ${{ job.status }}
-          channel: '#sre-alerts'
-          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
-        if: always()
-
-      - name: Create deployment summary
-        if: always()
+      - name: Create summary
         run: |
           echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Staging**: ${{ needs.deploy-staging.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Production**: ${{ needs.deploy-production.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Overall Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Staging: ${{ needs.deploy-staging.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Production: ${{ needs.deploy-production.result || 'skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Overall Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
