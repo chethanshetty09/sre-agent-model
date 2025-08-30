@@ -64,6 +64,8 @@ jobs:
         run: terraform init -input=false
       - name: Terraform Plan
         working-directory: sre-agent-aws/terraform
+        env:
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
         run: |
           terraform plan -input=false -no-color -out=tfplan
       - name: Upload plan artifact
@@ -96,6 +98,7 @@ jobs:
         working-directory: sre-agent-aws/terraform
         env:
           TF_SKIP_CONFIRMATION: '1'
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
         run: terraform apply -input=false -auto-approve
 
   create-db-snapshot:
