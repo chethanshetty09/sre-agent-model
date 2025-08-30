@@ -88,21 +88,25 @@ Create an IAM policy with the following permissions:
 
 #### Option A: Using AWS CDK (Recommended)
 
+Note: the CDK source for this project has been moved to `experimental/cdk/`. The CI on this branch uses Terraform only; keep CDK files in `experimental/cdk/` if you want to maintain them or run CDK locally.
+
+To work with the CDK locally:
+
 ```bash
-# Install AWS CDK
-npm install -g aws-cdk
+# change into the CDK folder
+cd experimental/cdk
 
-# Create deployment directory
-mkdir sre-agent-aws && cd sre-agent-aws
+# create and activate a venv, then install dependencies
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
 
-# Initialize CDK project
-cdk init app --language python
-
-# Install dependencies
-pip install aws-cdk-lib constructs
+# synth/deploy from the CDK folder
+cdk synth
+cdk deploy --require-approval never
 ```
 
-Create `app.py`:
+Example `app.py` (already present in `experimental/cdk/` if you cloned the repo):
 ```python
 #!/usr/bin/env python3
 import aws_cdk as cdk
@@ -110,10 +114,10 @@ from sre_agent_stack import SREAgentStack
 
 app = cdk.App()
 SREAgentStack(app, "SREAgentStack",
-    env=cdk.Environment(
-        account="YOUR_ACCOUNT_ID",
-        region="us-east-1"  # Change as needed
-    )
+  env=cdk.Environment(
+    account="YOUR_ACCOUNT_ID",
+    region="us-east-1"
+  )
 )
 
 app.synth()
