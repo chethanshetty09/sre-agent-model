@@ -263,7 +263,10 @@ resource "aws_db_subnet_group" "sre_agent_db_subnet_group" {
 resource "aws_db_instance" "sre_agent_db" {
   identifier     = "sre-agent-db"
   engine         = "postgres"
-  engine_version = "14.9"
+  # Let AWS pick a supported default minor engine version for PostgreSQL 14
+  # (removing a hard-coded unsupported minor version like 14.9 avoids
+  # InvalidParameterCombination errors). If you need a specific minor
+  # version, run `aws rds describe-db-engine-versions --engine postgres --query 'DBEngineVersions[].EngineVersion'` to list available versions
   instance_class = "db.t3.micro"
 
   allocated_storage     = 20

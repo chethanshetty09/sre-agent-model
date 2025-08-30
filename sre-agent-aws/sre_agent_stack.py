@@ -88,9 +88,12 @@ class SREAgentStack(Stack):
         )
 
         # S3 Bucket for ML Models
+        # Create S3 bucket for ML models. Do not hard-code the bucket name
+        # with a placeholder account id (e.g. YOUR_ACCOUNT_ID) because that
+        # can produce invalid bucket names. Let CDK generate a safe name
+        # or provide a validated, lowercase bucket name via context/parameters.
         model_bucket = s3.Bucket(
             self, "SREAgentModelBucket",
-            bucket_name=f"sre-agent-models-{self.account}",
             versioned=True,
             encryption=s3.BucketEncryption.S3_MANAGED,
             removal_policy=RemovalPolicy.DESTROY,
@@ -109,8 +112,12 @@ class SREAgentStack(Stack):
 
         database = rds.DatabaseInstance(
             self, "SREAgentDatabase",
+            # Specify a supported Postgres engine major version from the
+            # installed aws_cdk so the CDK construct API is satisfied.
+            # If you prefer a different major version, replace VER_16_3
+            # with another available constant from rds.PostgresEngineVersion.
             engine=rds.DatabaseInstanceEngine.postgres(
-                version=rds.PostgresEngineVersion.VER_14_9
+                version=rds.PostgresEngineVersion.VER_16_3
             ),
             instance_type=ec2.InstanceType.of(
                 ec2.InstanceClass.T3,
@@ -227,7 +234,7 @@ class SREAgentStack(Stack):
             "APIListener",
             port=80,
             protocol=elbv2.ApplicationProtocol.HTTP,
-            default_action=elbv2.ListenerAction.forward([api_task_definition])
+            default_target_groups=[api_target_group]
         )
 
         # SNS Topic for Alerts

@@ -1,0 +1,81 @@
+name: "Orchestrate Infra: Terraform -> Snapshot"
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'sre-agent-aws/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy to (staging|production)
+        required: false
+        default: staging
+        type: choice
+        options: [staging, production]
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  determine-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      env: ${{ steps.set-env.outputs.environment }}
+    steps:
+      - name: Set environment
+        id: set-env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          else
+            if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+              echo "environment=production" >> $GITHUB_OUTPUT
+            else
+              echo "environment=staging" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+  # CDK removed — we deploy only with Terraform
+
+  terraform-apply:
+    needs: determine-environment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.5.7'
+      - name: Terraform Init
+        working-directory: sre-agent-aws/terraform
+        run: terraform init -input=false
+      - name: Terraform Apply
+        working-directory: sre-agent-aws/terraform
+        run: terraform apply -input=false -auto-approve
+
+  create-db-snapshot:
+    needs: terraform-apply
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Create RDS snapshot
+        id: snapshot
+        run: |
+          SNAP_NAME="sre-agent-db-snapshot-$(date +%Y%m%d%H%M%S)"
+          aws rds create-db-snapshot --db-instance-identifier sre-agent-db --db-snapshot-identifier ${SNAP_NAME} --region ${{ env.AWS_REGION }}
+          echo "snapshot=${SNAP_NAME}" >> $GITHUB_OUTPUT
+      - name: Output snapshot id
+        run: echo "Created snapshot ${{ steps.snapshot.outputs.snapshot }}"
